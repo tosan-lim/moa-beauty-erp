@@ -50,12 +50,14 @@ def init_db():
     c = conn.cursor()
     # 1. 거래처 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS partners (
-        partner_code TEXT PRIMARY KEY, partner_name TEXT NOT NULL, type TEXT NOT NULL,
+        partner_code TEXT PRIMARY KEY, partner_name TEXT NOT NULL, type TEXT,
         phone TEXT, email TEXT, state TEXT, address TEXT, contact_person TEXT, category TEXT, registration_date TEXT)''')
+    
     # 2. 사용자 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL, email TEXT, created_at TEXT)''')
-    # 3. 입출고 내역 테이블 (신규 추가!)
+    
+    # 3. 입출고 내역 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, trans_date TEXT, trans_type TEXT, 
         partner_name TEXT, item_name TEXT, qty INTEGER, price REAL, total_amount REAL, manager TEXT)''')
@@ -117,12 +119,22 @@ else:
     tab1, tab2, tab3, tab4 = st.tabs(['📋 기초등록', '📦 구매/입고', '🏷️ 판매/출고', '📊 보고서'])
     tab_user = None
 
-# DB에서 거래처 목록 불러오기 (입고/출고 탭에서 사용)
+# DB에서 전체 컬럼 읽어오기 (구분 컬럼명 에러 완벽 방지)
 conn = get_db_connection()
-df_partners = pd.read_sql_query("SELECT partner_name, type FROM partners", conn)
+df_partners = pd.read_sql_query("SELECT * FROM partners", conn)
 conn.close()
-sellers = df_partners[df_partners['type'] == '매입처/Seller']['partner_name'].tolist() if not df_partners.empty else ["등록된 매입처 없음"]
-buyers = df_partners[df_partners['type'] == '매출처/Buyer']['partner_name'].tolist() if not df_partners.empty else ["등록된 매출처 없음"]
+
+# 'type' 또는 'partner_type' 컬럼 자동 매칭
+type_col = 'type' if 'type' in df_partners.columns else ('partner_type' if 'partner_type' in df_partners.columns else None)
+
+if not df_partners.empty and type_col and 'partner_name' in df_partners.columns:
+    sellers = df_partners[df_partners[type_col].astype(str).str.contains('매입|Seller', na=False)]['partner_name'].tolist()
+    buyers = df_partners[df_partners[type_col].astype(str).str.contains('매출|Buyer', na=False)]['partner_name'].tolist()
+else:
+    sellers, buyers = [], []
+
+if not sellers: sellers = ["등록된 매입처 없음"]
+if not buyers: buyers = ["등록된 매출처 없음"]
 
 # ==========================================
 # 탭 1: 기초 등록
@@ -151,7 +163,7 @@ with tab1:
                     st.success("저장 성공!")
                     st.rerun()
                 else: st.error("코드와 상호명은 필수입니다.")
-    st.dataframe(df_partners, use_container_width=True)
+    st.dataframe(df_partners, use_container_width=True, hide_index=True)
 
 # ==========================================
 # 탭 Admin: 직원/계정 관리
@@ -159,14 +171,13 @@ with tab1:
 if tab_user:
     with tab_user:
         st.subheader("👥 직원 관리 (Admin)")
-        # 코드 생략 방지: 간단한 조회 표만 우선 노출 (너무 길어지는 것 방지)
         conn = get_db_connection()
         df_users = pd.read_sql_query("SELECT username, name, role, email FROM users", conn)
         conn.close()
-        st.dataframe(df_users, use_container_width=True)
+        st.dataframe(df_users, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 2: 구매/입고 (신규!)
+# 탭 2: 구매/입고
 # ==========================================
 with tab2:
     st.subheader("📦 상품 구매 및 입고 등록 (Purchase/Inbound)")
@@ -191,7 +202,7 @@ with tab2:
                 conn.commit(); conn.close(); push_db_to_github()
                 st.success("입고 처리가 완료되었습니다!")
                 st.rerun()
-            else: st.error("상품명 입력 및 매입처 등록이 필요합니다.")
+            else: st.error("상품명 입력 및 매입처 선택이 필요합니다.")
             
     st.markdown("#### 최근 입고 내역")
     conn = get_db_connection()
@@ -200,7 +211,7 @@ with tab2:
     st.dataframe(df_in, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 3: 판매/출고 (신규!)
+# 탭 3: 판매/출고
 # ==========================================
 with tab3:
     st.subheader("🏷️ 상품 판매 및 출고 등록 (Sales/Outbound)")
@@ -225,7 +236,7 @@ with tab3:
                 conn.commit(); conn.close(); push_db_to_github()
                 st.success("출고 처리가 완료되었습니다!")
                 st.rerun()
-            else: st.error("상품명 입력 및 매출처 등록이 필요합니다.")
+            else: st.error("상품명 입력 및 매출처 선택이 필요합니다.")
 
     st.markdown("#### 최근 출고 내역")
     conn = get_db_connection()
