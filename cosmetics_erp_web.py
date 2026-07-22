@@ -119,14 +119,12 @@ else:
     tab1, tab2, tab3, tab4 = st.tabs(['📋 기초등록', '📦 구매/입고', '🏷️ 판매/출고', '📊 보고서'])
     tab_user = None
 
-# DB에서 전체 컬럼 읽어오기 (구분 컬럼명 에러 완벽 방지)
+# DB에서 거래처 불러오기
 conn = get_db_connection()
 df_partners = pd.read_sql_query("SELECT * FROM partners", conn)
 conn.close()
 
-# 'type' 또는 'partner_type' 컬럼 자동 매칭
 type_col = 'type' if 'type' in df_partners.columns else ('partner_type' if 'partner_type' in df_partners.columns else None)
-
 if not df_partners.empty and type_col and 'partner_name' in df_partners.columns:
     sellers = df_partners[df_partners[type_col].astype(str).str.contains('매입|Seller', na=False)]['partner_name'].tolist()
     buyers = df_partners[df_partners[type_col].astype(str).str.contains('매출|Buyer', na=False)]['partner_name'].tolist()
@@ -166,15 +164,55 @@ with tab1:
     st.dataframe(df_partners, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 Admin: 직원/계정 관리
+# 탭 Admin: 직원/계정 관리 (신규 양식 추가!)
 # ==========================================
 if tab_user:
     with tab_user:
-        st.subheader("👥 직원 관리 (Admin)")
-        conn = get_db_connection()
-        df_users = pd.read_sql_query("SELECT username, name, role, email FROM users", conn)
-        conn.close()
-        st.dataframe(df_users, use_container_width=True, hide_index=True)
+        st.subheader("👥 직원 계정 신규 등록 및 권한 관리")
+        
+        col_u1, col_u2 = st.columns([1, 1])
+        
+        # 왼쪽: 계정 생성 양식
+        with col_u1:
+            st.markdown("##### ➕ 새 직원 등록")
+            with st.form("new_user_form", clear_on_submit=True):
+                new_username = st.text_input("아이디 (Username)")
+                new_password = st.text_input("비밀번호 (Password)", type="password")
+                new_name = st.text_input("직원 이름 (Full Name)")
+                new_role = st.selectbox("권한 부여 (Role)", ["Staff", "Manager", "Admin"])
+                new_email = st.text_input("이메일 주소")
+                
+                user_submit = st.form_submit_button("직원 계정 생성", type="primary")
+                
+                if user_submit:
+                    if not new_username or not new_password or not new_name:
+                        st.error("아이디, 비밀번호, 이름은 필수 입력 항목입니다.")
+                    else:
+                        try:
+                            conn = get_db_connection()
+                            c = conn.cursor()
+                            c.execute('''
+                                INSERT INTO users (username, password, name, role, email, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', (new_username, make_hashes(new_password), new_name, new_role, new_email, datetime.now().strftime("%Y-%m-%d")))
+                            conn.commit()
+                            conn.close()
+                            
+                            push_db_to_github()  # GitHub 백업
+                            st.success(f"[{new_name}] 직원이 {new_role} 권한으로 등록되었습니다!")
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error("이미 존재하는 아이디입니다.")
+                        except Exception as e:
+                            st.error(f"계정 생성 오류: {e}")
+
+        # 오른쪽: 기존 직원 목록
+        with col_u2:
+            st.markdown("##### 📋 등록된 직원 및 권한 목록")
+            conn = get_db_connection()
+            df_users = pd.read_sql_query("SELECT username as 아이디, name as 이름, role as 권한, email as 이메일, created_at as 등록일 FROM users", conn)
+            conn.close()
+            st.dataframe(df_users, use_container_width=True, hide_index=True)
 
 # ==========================================
 # 탭 2: 구매/입고
