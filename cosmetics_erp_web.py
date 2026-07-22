@@ -55,12 +55,12 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL, email TEXT, created_at TEXT)''')
     
-    # 3. 입출고 내역 테이블 (초기 생성)
+    # 3. 입출고 내역 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, trans_date TEXT, trans_type TEXT, 
         partner_name TEXT, item_name TEXT, qty INTEGER, price REAL, total_amount REAL, manager TEXT)''')
     
-    # 🔥 [DB 자동 업그레이드] 재고 코드 & 이미지 컬럼이 없으면 자동으로 추가!
+    # DB 자동 업그레이드 (상품코드, 이미지 컬럼)
     c.execute("PRAGMA table_info(transactions)")
     columns = [info[1] for info in c.fetchall()]
     if 'item_code' not in columns:
@@ -105,11 +105,33 @@ if not st.session_state['logged_in']:
     st.stop()
 
 # -------------------------------------------------------------------
-# 🏢 ERP 메인 화면
+# 🏢 ERP 메인 화면 및 사이드바 (비밀번호 변경 기능 추가)
 # -------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### KIL INDIA TRADE")
     st.info(f"👤 **{st.session_state['user_name']}**\n\n🎖️ 권한: **{st.session_state['user_role']}**")
+    
+    # 🔥 [개인 비밀번호 변경 기능 추가]
+    with st.expander("🔑 내 비밀번호 변경"):
+        with st.form("change_pwd_form", clear_on_submit=True):
+            current_pw = st.text_input("현재 비밀번호", type="password")
+            new_pw = st.text_input("새 비밀번호", type="password")
+            new_pw_confirm = st.text_input("새 비밀번호 확인", type="password")
+            
+            if st.form_submit_button("변경하기"):
+                if new_pw and new_pw == new_pw_confirm:
+                    conn = get_db_connection()
+                    user = conn.cursor().execute("SELECT password FROM users WHERE username = ?", (st.session_state['username'],)).fetchone()
+                    if user and check_hashes(current_pw, user['password']):
+                        conn.execute("UPDATE users SET password=? WHERE username=?", (make_hashes(new_pw), st.session_state['username']))
+                        conn.commit(); conn.close(); push_db_to_github()
+                        st.success("비밀번호가 성공적으로 변경되었습니다!")
+                    else:
+                        st.error("현재 비밀번호가 일치하지 않습니다.")
+                else:
+                    st.error("새 비밀번호가 일치하지 않거나 비어있습니다.")
+    
+    st.markdown("---")
     if st.button("🚪 로그아웃", use_container_width=True):
         st.session_state.update({'logged_in': False, 'username': '', 'user_role': '', 'user_name': ''})
         st.rerun()
@@ -117,7 +139,7 @@ with st.sidebar:
 st.title('KIL INDIA TRADE PVT. LTD. - Moa Beauty ERP')
 st.markdown("---")
 
-# 탭 구성 (Admin이면 직원관리 표시)
+# 탭 구성
 if st.session_state['user_role'] == 'Admin':
     tab1, tab_user, tab2, tab3, tab_inv, tab4 = st.tabs(['📋 기초등록', '👥 직원관리', '📦 구매/입고', '🏷️ 판매/출고', '🏢 재고현황', '📊 보고서'])
 else:
@@ -166,7 +188,7 @@ with tab1:
     st.dataframe(df_partners, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 Admin: 직원 수정/삭제 기능 추가!
+# 탭 Admin: 직원 정보 수정 (비밀번호 유지 로직 명확화)
 # ==========================================
 if tab_user:
     with tab_user:
@@ -177,7 +199,7 @@ if tab_user:
             st.markdown("##### ➕ 새 직원 등록")
             with st.form("new_user_form", clear_on_submit=True):
                 new_username = st.text_input("아이디 (Username)")
-                new_password = st.text_input("비밀번호", type="password")
+                new_password = st.text_input("초기 비밀번호 부여", type="password")
                 new_name = st.text_input("이름")
                 new_role = st.selectbox("권한", ["Staff", "Manager", "Admin"])
                 if st.form_submit_button("계정 생성", type="primary"):
@@ -192,7 +214,7 @@ if tab_user:
                     else: st.error("필수 항목을 입력하세요.")
                     
             st.markdown("---")
-            st.markdown("##### ⚙️ 직원 정보 수정 및 삭제")
+            st.markdown("##### ⚙️ 직원 권한 수정 및 삭제")
             conn = get_db_connection()
             user_list = [row['username'] for row in conn.cursor().execute("SELECT username FROM users").fetchall()]
             conn.close()
@@ -200,15 +222,16 @@ if tab_user:
             target_user = st.selectbox("수정/삭제할 아이디 선택", options=user_list)
             if target_user:
                 with st.form("edit_user_form"):
-                    edit_password = st.text_input("새 비밀번호 (변경시에만 입력)", type="password")
                     edit_role = st.selectbox("새로운 권한", ["Staff", "Manager", "Admin"])
+                    edit_password = st.text_input("새 비밀번호 (유지하려면 비워두세요)", type="password")
+                    
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
                         if st.form_submit_button("정보 수정", type="primary"):
                             conn = get_db_connection()
-                            if edit_password:
+                            if edit_password:  # 입력했을 때만 비밀번호 변경
                                 conn.execute("UPDATE users SET password=?, role=? WHERE username=?", (make_hashes(edit_password), edit_role, target_user))
-                            else:
+                            else:  # 비워두면 권한만 변경
                                 conn.execute("UPDATE users SET role=? WHERE username=?", (edit_role, target_user))
                             conn.commit(); conn.close(); push_db_to_github()
                             st.success("수정 완료!"); st.rerun()
@@ -230,7 +253,7 @@ if tab_user:
             st.dataframe(df_users, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 2: 구매/입고 (이미지 첨부 및 상품코드 추가)
+# 탭 2: 구매/입고
 # ==========================================
 with tab2:
     st.subheader("📦 상품 입고 등록")
@@ -252,9 +275,7 @@ with tab2:
         if st.form_submit_button("입고 등록", type="primary"):
             if item_name and item_code and partner_name != "매입처 없음":
                 img_b64 = ""
-                if image_file:
-                    img_b64 = base64.b64encode(image_file.read()).decode('utf-8')
-                    
+                if image_file: img_b64 = base64.b64encode(image_file.read()).decode('utf-8')
                 conn = get_db_connection()
                 conn.execute("INSERT INTO transactions (trans_date, trans_type, partner_name, item_code, item_name, qty, price, total_amount, manager, image_base64) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                              (trans_date, "입고", partner_name, item_code, item_name, qty, price, total_amount, st.session_state['user_name'], img_b64))
@@ -268,13 +289,12 @@ with tab2:
     conn.close()
     
     if not df_in.empty:
-        # 이미지가 있는 경우 웹 화면에 썸네일로 표시
         df_in['사진'] = df_in['image_base64'].apply(lambda x: f"data:image/png;base64,{x}" if pd.notnull(x) and x != "" else None)
         df_in_display = df_in.drop(columns=['image_base64'])
         st.dataframe(df_in_display, column_config={"사진": st.column_config.ImageColumn("사진")}, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 3: 판매/출고 (상품코드 추가)
+# 탭 3: 판매/출고
 # ==========================================
 with tab3:
     st.subheader("🏷️ 상품 출고 등록")
@@ -307,7 +327,7 @@ with tab3:
     st.dataframe(df_out, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 재고: 🏢 실시간 재고 현황 (신규 추가!)
+# 탭 재고: 🏢 실시간 재고 현황
 # ==========================================
 with tab_inv:
     st.subheader("🏢 실시간 상품 재고 및 금액 현황")
@@ -329,18 +349,15 @@ with tab_inv:
     conn.close()
     
     if not df_inv.empty:
-        # 재고 및 금액 계산
         df_inv['현재재고(Qty)'] = df_inv['in_qty'] - df_inv['out_qty']
         df_inv['평균매입단가'] = df_inv['avg_price'].fillna(0).round(2)
         df_inv['재고총금액(Amount)'] = (df_inv['현재재고(Qty)'] * df_inv['평균매입단가']).round(2)
         
-        # 보기 좋게 컬럼 정리
         df_result = df_inv[['item_code', 'item_name', '현재재고(Qty)', '평균매입단가', '재고총금액(Amount)']].rename(
             columns={'item_code':'상품코드', 'item_name':'상품명'}
         )
         st.dataframe(df_result, use_container_width=True, hide_index=True)
         
-        # 요약 정보 표시
         total_stock = df_result['현재재고(Qty)'].sum()
         total_value = df_result['재고총금액(Amount)'].sum()
         st.markdown(f"**총 보유 재고 수량:** `{total_stock:,.0f}` 개  |  **총 재고 금액 가치:** `{total_value:,.2f}`")
