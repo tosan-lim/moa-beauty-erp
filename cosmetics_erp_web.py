@@ -48,27 +48,21 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
-    # 1. 거래처 / 2. 사용자 테이블 생성
     c.execute('''CREATE TABLE IF NOT EXISTS partners (
         partner_code TEXT PRIMARY KEY, partner_name TEXT NOT NULL, type TEXT,
         phone TEXT, email TEXT, state TEXT, address TEXT, contact_person TEXT, category TEXT, registration_date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY, password TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL, email TEXT, created_at TEXT)''')
-    
-    # 3. 입출고 내역 테이블
     c.execute('''CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, trans_date TEXT, trans_type TEXT, 
         partner_name TEXT, item_name TEXT, qty INTEGER, price REAL, total_amount REAL, manager TEXT)''')
     
-    # DB 자동 업그레이드 (상품코드, 이미지 컬럼)
+    # DB 자동 업그레이드
     c.execute("PRAGMA table_info(transactions)")
     columns = [info[1] for info in c.fetchall()]
-    if 'item_code' not in columns:
-        c.execute("ALTER TABLE transactions ADD COLUMN item_code TEXT")
-    if 'image_base64' not in columns:
-        c.execute("ALTER TABLE transactions ADD COLUMN image_base64 TEXT")
+    if 'item_code' not in columns: c.execute("ALTER TABLE transactions ADD COLUMN item_code TEXT")
+    if 'image_base64' not in columns: c.execute("ALTER TABLE transactions ADD COLUMN image_base64 TEXT")
     
-    # 관리자 없으면 생성
     c.execute("SELECT * FROM users WHERE username = 'admin'")
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, name, role, email, created_at) VALUES (?, ?, ?, ?, ?, ?)", 
@@ -105,19 +99,17 @@ if not st.session_state['logged_in']:
     st.stop()
 
 # -------------------------------------------------------------------
-# 🏢 ERP 메인 화면 및 사이드바 (비밀번호 변경 기능 추가)
+# 🏢 ERP 메인 화면 및 사이드바
 # -------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### KIL INDIA TRADE")
     st.info(f"👤 **{st.session_state['user_name']}**\n\n🎖️ 권한: **{st.session_state['user_role']}**")
     
-    # 🔥 [개인 비밀번호 변경 기능 추가]
     with st.expander("🔑 내 비밀번호 변경"):
         with st.form("change_pwd_form", clear_on_submit=True):
             current_pw = st.text_input("현재 비밀번호", type="password")
             new_pw = st.text_input("새 비밀번호", type="password")
             new_pw_confirm = st.text_input("새 비밀번호 확인", type="password")
-            
             if st.form_submit_button("변경하기"):
                 if new_pw and new_pw == new_pw_confirm:
                     conn = get_db_connection()
@@ -126,10 +118,8 @@ with st.sidebar:
                         conn.execute("UPDATE users SET password=? WHERE username=?", (make_hashes(new_pw), st.session_state['username']))
                         conn.commit(); conn.close(); push_db_to_github()
                         st.success("비밀번호가 성공적으로 변경되었습니다!")
-                    else:
-                        st.error("현재 비밀번호가 일치하지 않습니다.")
-                else:
-                    st.error("새 비밀번호가 일치하지 않거나 비어있습니다.")
+                    else: st.error("현재 비밀번호가 일치하지 않습니다.")
+                else: st.error("새 비밀번호가 일치하지 않거나 비어있습니다.")
     
     st.markdown("---")
     if st.button("🚪 로그아웃", use_container_width=True):
@@ -139,14 +129,13 @@ with st.sidebar:
 st.title('KIL INDIA TRADE PVT. LTD. - Moa Beauty ERP')
 st.markdown("---")
 
-# 탭 구성
 if st.session_state['user_role'] == 'Admin':
     tab1, tab_user, tab2, tab3, tab_inv, tab4 = st.tabs(['📋 기초등록', '👥 직원관리', '📦 구매/입고', '🏷️ 판매/출고', '🏢 재고현황', '📊 보고서'])
 else:
     tab1, tab2, tab3, tab_inv, tab4 = st.tabs(['📋 기초등록', '📦 구매/입고', '🏷️ 판매/출고', '🏢 재고현황', '📊 보고서'])
     tab_user = None
 
-# 거래처 목록 불러오기
+# 거래처 데이터 로드
 conn = get_db_connection()
 df_partners = pd.read_sql_query("SELECT * FROM partners", conn)
 conn.close()
@@ -188,13 +177,12 @@ with tab1:
     st.dataframe(df_partners, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 Admin: 직원 정보 수정 (비밀번호 유지 로직 명확화)
+# 탭 Admin: 직원 관리
 # ==========================================
 if tab_user:
     with tab_user:
         st.subheader("👥 직원 관리 (등록 / 수정 / 삭제)")
         col_u1, col_u2 = st.columns([1, 1.5])
-        
         with col_u1:
             st.markdown("##### ➕ 새 직원 등록")
             with st.form("new_user_form", clear_on_submit=True):
@@ -212,27 +200,22 @@ if tab_user:
                             st.success(f"{new_name} 생성 완료!"); st.rerun()
                         except sqlite3.IntegrityError: st.error("이미 존재하는 아이디입니다.")
                     else: st.error("필수 항목을 입력하세요.")
-                    
             st.markdown("---")
             st.markdown("##### ⚙️ 직원 권한 수정 및 삭제")
             conn = get_db_connection()
             user_list = [row['username'] for row in conn.cursor().execute("SELECT username FROM users").fetchall()]
             conn.close()
-            
             target_user = st.selectbox("수정/삭제할 아이디 선택", options=user_list)
             if target_user:
                 with st.form("edit_user_form"):
                     edit_role = st.selectbox("새로운 권한", ["Staff", "Manager", "Admin"])
                     edit_password = st.text_input("새 비밀번호 (유지하려면 비워두세요)", type="password")
-                    
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
                         if st.form_submit_button("정보 수정", type="primary"):
                             conn = get_db_connection()
-                            if edit_password:  # 입력했을 때만 비밀번호 변경
-                                conn.execute("UPDATE users SET password=?, role=? WHERE username=?", (make_hashes(edit_password), edit_role, target_user))
-                            else:  # 비워두면 권한만 변경
-                                conn.execute("UPDATE users SET role=? WHERE username=?", (edit_role, target_user))
+                            if edit_password: conn.execute("UPDATE users SET password=?, role=? WHERE username=?", (make_hashes(edit_password), edit_role, target_user))
+                            else: conn.execute("UPDATE users SET role=? WHERE username=?", (edit_role, target_user))
                             conn.commit(); conn.close(); push_db_to_github()
                             st.success("수정 완료!"); st.rerun()
                     with col_b2:
@@ -242,9 +225,7 @@ if tab_user:
                                 conn.execute("DELETE FROM users WHERE username=?", (target_user,))
                                 conn.commit(); conn.close(); push_db_to_github()
                                 st.success("삭제 완료!"); st.rerun()
-                        else:
-                            st.warning("admin은 삭제 불가")
-
+                        else: st.warning("admin은 삭제 불가")
         with col_u2:
             st.markdown("##### 📋 현재 직원 목록")
             conn = get_db_connection()
@@ -253,7 +234,7 @@ if tab_user:
             st.dataframe(df_users, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 탭 2: 구매/입고
+# 탭 2: 구매/입고 (등록 + 리스트 + 수정/삭제 기능)
 # ==========================================
 with tab2:
     st.subheader("📦 상품 입고 등록")
@@ -270,7 +251,6 @@ with tab2:
         with col3:
             price = st.number_input("단가", min_value=0.0, step=0.1)
             total_amount = qty * price
-            st.info(f"총 금액: {total_amount:,.2f}")
             
         if st.form_submit_button("입고 등록", type="primary"):
             if item_name and item_code and partner_name != "매입처 없음":
@@ -283,18 +263,60 @@ with tab2:
                 st.success("입고 처리가 완료되었습니다!"); st.rerun()
             else: st.error("상품코드, 상품명, 매입처는 필수입니다.")
             
-    st.markdown("#### 최근 입고 내역")
+    st.markdown("#### 📋 최근 입고 내역")
     conn = get_db_connection()
-    df_in = pd.read_sql_query("SELECT trans_date as 일자, partner_name as 매입처, item_code as 상품코드, item_name as 상품명, qty as 수량, total_amount as 총액, image_base64 FROM transactions WHERE trans_type='입고' ORDER BY id DESC LIMIT 50", conn)
+    df_in_raw = pd.read_sql_query("SELECT id, trans_date, partner_name, item_code, item_name, qty, price, total_amount, manager, image_base64 FROM transactions WHERE trans_type='입고' ORDER BY id DESC LIMIT 50", conn)
     conn.close()
     
-    if not df_in.empty:
+    if not df_in_raw.empty:
+        df_in = df_in_raw.copy()
         df_in['사진'] = df_in['image_base64'].apply(lambda x: f"data:image/png;base64,{x}" if pd.notnull(x) and x != "" else None)
-        df_in_display = df_in.drop(columns=['image_base64'])
+        df_in_display = df_in.rename(columns={'id':'ID', 'trans_date':'일자', 'partner_name':'매입처', 'item_code':'상품코드', 'item_name':'상품명', 'qty':'수량', 'price':'단가', 'total_amount':'총액', 'manager':'담당자'}).drop(columns=['image_base64'])
         st.dataframe(df_in_display, column_config={"사진": st.column_config.ImageColumn("사진")}, use_container_width=True, hide_index=True)
+        
+        # 🔥 [신규] 입고 내역 수정 및 삭제
+        st.markdown("---")
+        with st.expander("⚙️ 등록된 입고 내역 수정 및 삭제"):
+            opt_in = ["선택 안함"] + [f"ID: {row['id']} - {row['trans_date']} / {row['item_name']} / {row['qty']}개" for idx, row in df_in_raw.iterrows()]
+            sel_in = st.selectbox("수정/삭제할 대상을 선택하세요", options=opt_in, key="sel_in")
+            
+            if sel_in != "선택 안함":
+                t_id = int(sel_in.split("ID: ")[1].split(" -")[0])
+                t_row = df_in_raw[df_in_raw['id'] == t_id].iloc[0]
+                
+                with st.form("edit_in_form"):
+                    e_c1, e_c2, e_c3 = st.columns(3)
+                    with e_c1:
+                        try: default_date = datetime.strptime(t_row['trans_date'], "%Y-%m-%d").date()
+                        except: default_date = datetime.now().date()
+                        e_date = st.date_input("입고 일자 (수정)", value=default_date)
+                        s_idx = sellers.index(t_row['partner_name']) if t_row['partner_name'] in sellers else 0
+                        e_partner = st.selectbox("매입처 (수정)", options=sellers, index=s_idx)
+                    with e_c2:
+                        e_code = st.text_input("상품코드 (수정)", value=t_row['item_code'])
+                        e_name = st.text_input("상품명 (수정)", value=t_row['item_name'])
+                    with e_c3:
+                        e_qty = st.number_input("수량 (수정)", min_value=1, step=1, value=int(t_row['qty']))
+                        e_price = st.number_input("단가 (수정)", min_value=0.0, step=0.1, value=float(t_row['price']))
+                        
+                    e_b1, e_b2 = st.columns(2)
+                    with e_b1:
+                        if st.form_submit_button("내역 수정 (Update)", type="primary"):
+                            e_total = e_qty * e_price
+                            conn = get_db_connection()
+                            conn.execute("UPDATE transactions SET trans_date=?, partner_name=?, item_code=?, item_name=?, qty=?, price=?, total_amount=? WHERE id=?", 
+                                         (e_date.strftime("%Y-%m-%d"), e_partner, e_code, e_name, e_qty, e_price, e_total, t_id))
+                            conn.commit(); conn.close(); push_db_to_github()
+                            st.success("성공적으로 수정되었습니다!"); st.rerun()
+                    with e_b2:
+                        if st.form_submit_button("🚨 내역 삭제 (Delete)"):
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM transactions WHERE id=?", (t_id,))
+                            conn.commit(); conn.close(); push_db_to_github()
+                            st.success("삭제 완료!"); st.rerun()
 
 # ==========================================
-# 탭 3: 판매/출고
+# 탭 3: 판매/출고 (등록 + 리스트 + 수정/삭제 기능)
 # ==========================================
 with tab3:
     st.subheader("🏷️ 상품 출고 등록")
@@ -320,11 +342,55 @@ with tab3:
                 st.success("출고 처리가 완료되었습니다!"); st.rerun()
             else: st.error("상품코드, 상품명, 매출처는 필수입니다.")
 
-    st.markdown("#### 최근 출고 내역")
+    st.markdown("#### 📋 최근 출고 내역")
     conn = get_db_connection()
-    df_out = pd.read_sql_query("SELECT trans_date as 일자, partner_name as 매출처, item_code as 상품코드, item_name as 상품명, qty as 수량, total_amount as 총액 FROM transactions WHERE trans_type='출고' ORDER BY id DESC LIMIT 50", conn)
+    df_out_raw = pd.read_sql_query("SELECT id, trans_date, partner_name, item_code, item_name, qty, price, total_amount, manager FROM transactions WHERE trans_type='출고' ORDER BY id DESC LIMIT 50", conn)
     conn.close()
-    st.dataframe(df_out, use_container_width=True, hide_index=True)
+    
+    if not df_out_raw.empty:
+        df_out_display = df_out_raw.rename(columns={'id':'ID', 'trans_date':'일자', 'partner_name':'매출처', 'item_code':'상품코드', 'item_name':'상품명', 'qty':'수량', 'price':'단가', 'total_amount':'총액', 'manager':'담당자'})
+        st.dataframe(df_out_display, use_container_width=True, hide_index=True)
+        
+        # 🔥 [신규] 출고 내역 수정 및 삭제
+        st.markdown("---")
+        with st.expander("⚙️ 등록된 출고 내역 수정 및 삭제"):
+            opt_out = ["선택 안함"] + [f"ID: {row['id']} - {row['trans_date']} / {row['item_name']} / {row['qty']}개" for idx, row in df_out_raw.iterrows()]
+            sel_out = st.selectbox("수정/삭제할 대상을 선택하세요", options=opt_out, key="sel_out")
+            
+            if sel_out != "선택 안함":
+                t_id = int(sel_out.split("ID: ")[1].split(" -")[0])
+                t_row = df_out_raw[df_out_raw['id'] == t_id].iloc[0]
+                
+                with st.form("edit_out_form"):
+                    e_c1, e_c2, e_c3 = st.columns(3)
+                    with e_c1:
+                        try: default_date = datetime.strptime(t_row['trans_date'], "%Y-%m-%d").date()
+                        except: default_date = datetime.now().date()
+                        e_date = st.date_input("출고 일자 (수정)", value=default_date)
+                        b_idx = buyers.index(t_row['partner_name']) if t_row['partner_name'] in buyers else 0
+                        e_partner = st.selectbox("매출처 (수정)", options=buyers, index=b_idx)
+                    with e_c2:
+                        e_code = st.text_input("상품코드 (수정)", value=t_row['item_code'])
+                        e_name = st.text_input("상품명 (수정)", value=t_row['item_name'])
+                    with e_c3:
+                        e_qty = st.number_input("수량 (수정)", min_value=1, step=1, value=int(t_row['qty']))
+                        e_price = st.number_input("단가 (수정)", min_value=0.0, step=0.1, value=float(t_row['price']))
+                        
+                    e_b1, e_b2 = st.columns(2)
+                    with e_b1:
+                        if st.form_submit_button("내역 수정 (Update)", type="primary"):
+                            e_total = e_qty * e_price
+                            conn = get_db_connection()
+                            conn.execute("UPDATE transactions SET trans_date=?, partner_name=?, item_code=?, item_name=?, qty=?, price=?, total_amount=? WHERE id=?", 
+                                         (e_date.strftime("%Y-%m-%d"), e_partner, e_code, e_name, e_qty, e_price, e_total, t_id))
+                            conn.commit(); conn.close(); push_db_to_github()
+                            st.success("성공적으로 수정되었습니다!"); st.rerun()
+                    with e_b2:
+                        if st.form_submit_button("🚨 내역 삭제 (Delete)"):
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM transactions WHERE id=?", (t_id,))
+                            conn.commit(); conn.close(); push_db_to_github()
+                            st.success("삭제 완료!"); st.rerun()
 
 # ==========================================
 # 탭 재고: 🏢 실시간 재고 현황
